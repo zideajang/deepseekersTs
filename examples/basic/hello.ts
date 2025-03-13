@@ -7,7 +7,6 @@ async function main() {
     const agent = new Agent("hello",deepSeekClient);
     const result = await agent.run("write hello world in python",{});
     console.log(result.getText())
-    // console.log(result.getData())
 }
 
 main();
