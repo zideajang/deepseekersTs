@@ -1,0 +1,291 @@
+import * as hashlib from 'crypto';
+import * as time from 'node:timers/promises';
+import * as inspect from 'util'; // For inspect.getOwnPropertyNames
+import { Client, DeepSeekClient } from '../client/'; // Assuming these are in a file
+import { SystemMessage, AIMessage, HumanMessage, BaseMessage, MessageRole } from '../message/'; // Assuming these are in a file
+import { Result, ErrorResult, DeepseekResult } from '../result/'; // Assuming these are in a file
+import { _json_schema_to_example, print_config, function_to_json } from './utils'; // Assuming these are in a file
+import ResponseOrError from '../types';
+
+type Dict<T> = { [key: string]: T };
+type AnyFunction = (...args: any[]) => any;
+type MessageUnion = Dict<any> | BaseMessage | string | AnyFunction;
+type SystemMessageUnion = string | SystemMessage | AnyFunction;
+
+const __CTX_VARS_NAME__ = "context";
+
+function chat(f: () => any): any {
+    return f();
+}
+
+class AgentDep {
+    // Placeholder for Agent dependencies
+}
+
+class Agent<D, T> {
+    name: string;
+    client: Client;
+    messages: BaseMessage[] = [];
+    ResultType: typeof DeepseekResult = DeepseekResult;
+    verbose: boolean;
+    model_name: string;
+    deps_type: any; // Type of D
+    deps: D | null = null;
+    context: Dict<any> | (() => Dict<any>) | null;
+    available_tools: Dict<AnyFunction> = {};
+    result_type: any; // Type of T
+    system_message: SystemMessage | null = null;
+    model_config: Dict<any> | null = null;
+    result: Result | null = null;
+
+    constructor(
+        name: string,
+        client: Client = new DeepSeekClient({ name: 'deepseek-client' }),
+        model_name: string = 'deepseek-chat',
+        context: Dict<any> | (() => Dict<any>) | null = null,
+        system_message: SystemMessageUnion | null = null,
+        deps_type: any = null,
+        result_type: any = null,
+        verbose: boolean = true
+    ) {
+        this.name = name;
+        this.client = client;
+        this.verbose = verbose;
+        this.model_name = model_name;
+        this.deps_type = deps_type;
+        this.context = context;
+        if (this.deps_type) {
+            if (!context || typeof context !== 'object' || !('deps' in context)) {
+                throw new Error("需要在 context 提供 deps 字段内容");
+            }
+            this.deps = (context as Dict<any>)['deps'] as D;
+        }
+        this.result_type = result_type;
+        if (system_message) {
+            if (typeof system_message === 'string') {
+                if (result_type) {
+                    const res = _json_schema_to_example({ result_type: result_type });
+                    this.add_message({
+                        role: 'system',
+                        content: system_message + res
+                    });
+                } else {
+                    this.add_message({
+                        role: 'system',
+                        content: system_message
+                    });
+                }
+            } else if (system_message instanceof SystemMessage) {
+                if (result_type) {
+                    const res = _json_schema_to_example({ result_type: result_type });
+                    system_message.content = system_message.content + res;
+                    this.add_message(system_message);
+                } else {
+                    this.add_message(system_message);
+                }
+            } else if (typeof system_message === 'function') {
+                this.add_message(system_message);
+            }
+        }
+    }
+
+    tool(func: AnyFunction): any {
+        this.bind_tool(func.name, func);
+        return (...args: any[]) => {
+            func(...args);
+        };
+    }
+
+    tool_with_context(func: AnyFunction): any {
+        this.bind_tool(func.name, func);
+        return (...args: any[]) => {
+            func(this.context, ...args);
+        };
+    }
+
+    bind_tools(tools: AnyFunction[]): void {
+        for (const tool of tools) {
+            if (typeof tool === 'function') {
+                this.bind_tool(tool.name, tool);
+            }
+        }
+    }
+
+    bind_tool(tool_name: string, func: AnyFunction): void {
+        this.available_tools[tool_name || func.name] = func;
+    }
+
+    unbind_tool(func: AnyFunction): void {
+        delete this.available_tools[func.name];
+    }
+
+    system_prompt(inject_kwargs: Dict<any> = {}): (func: AnyFunction) => AnyFunction {
+        return (func: AnyFunction) => {
+            return (...args: any[]) => {
+                const all_kwargs = { ...inject_kwargs, ...args[args.length - 1] || {} };
+                const prompt = func(this.context, ...args, all_kwargs);
+                const func_code = func.toString();
+                const func_signature = inspect.getOwnPropertyNames(func);
+                const func_name = func.name;
+                this._update_system_message(prompt);
+                return prompt;
+            };
+        };
+    }
+
+    result_validator(inject_kwargs: Dict<any> = {}): void {
+        // Placeholder for result validation
+    }
+
+    update_system_message(prompt: string | BaseMessage): void {
+        this.messages = [];
+        this._update_system_message(prompt);
+    }
+
+    _update_system_message(prompt: string | BaseMessage): void {
+        if (typeof prompt === 'string') {
+            this.system_message = new SystemMessage({ content: prompt });
+        } else if (prompt instanceof BaseMessage) {
+            this.system_message = prompt;
+        } else {
+            throw new Error(`不支持 prompt 类型 ${typeof prompt}, 类型应该为 string 或者 SystemMessge`);
+        }
+        if (this.messages.length) {
+            this.messages[0] = this.system_message;
+        } else {
+            this.messages.push(this.system_message);
+        }
+    }
+
+    add_message(message: MessageUnion): BaseMessage {
+        let msg: BaseMessage;
+        if (typeof message === 'object' && ! (message instanceof BaseMessage)) {
+            msg = new BaseMessage({ role: message['role'], content: message['content'] });
+        } else if (message instanceof BaseMessage) {
+            msg = message;
+        } else if (typeof message === 'string') {
+            msg = new HumanMessage({ content: message });
+        } else if (typeof message === 'function') {
+            msg = message as any;
+        } else {
+            throw new Error(`不支持 query 类型 ${typeof message}, 类型应该为 string 或者 HumanSystem`);
+        }
+        this.messages.push(msg);
+        return msg;
+    }
+
+    messages_to_dict(): Dict<any>[] {
+        const res: Dict<any>[] = [];
+        for (const message of this.messages) {
+            if ([MessageRole.AI, MessageRole.Human, MessageRole.System].includes(message.role)) {
+                res.push(message.model_dump());
+            }
+        }
+        return res;
+    }
+
+    update_deps(deps_value: D): void {
+        this.deps = deps_value;
+    }
+
+    update_model_config(config: Dict<any>): void {
+        this.model_config = config;
+    }
+
+    update_result(result: Result): void {
+        this.result = result;
+    }
+
+    run(query: string | HumanMessage, deps: Dict<any> = {}): Result {
+        if (deps) {
+            const deps_value = deps['deps'] as D;
+            if (deps_value) {
+                this.update_deps(deps_value);
+            }
+        }
+
+        this.add_message(query);
+
+        if (this.deps && typeof this.messages[0] === 'function') {
+            this.messages[0] = (this.messages[0] as any)(this.deps);
+        }
+
+        const messages = this.messages_to_dict();
+        const config: Dict<any> = {
+            model: this.model_name
+            messages: messages,
+        };
+
+        if (deps) {
+            for (const k in deps) {
+                if (deps.hasOwnProperty(k)) {
+                    config[k] = deps[k];
+                }
+            }
+        }
+
+        if (Object.keys(this.available_tools).length > 0) {
+            config['tools'] = [];
+            for (const tool_name in this.available_tools) {
+                if (this.available_tools.hasOwnProperty(tool_name)) {
+                    config['tools'].push(function_to_json(this.available_tools[tool_name]));
+                }
+            }
+
+            if (config['tools']) {
+                for (const tool of config['tools']) {
+                    const params = tool['function']['parameters'];
+                    delete params['properties'][__CTX_VARS_NAME__];
+                    if (params['required'] && params['required'].includes(__CTX_VARS_NAME__)) {
+                        params['required'] = params['required'].filter((item: string) => item !== __CTX_VARS_NAME__);
+                    }
+                }
+            }
+        }
+
+        if (this.result_type) {
+            config['response_format'] = {
+                'type': 'json_object',
+            };
+        }
+
+        this.update_model_config(config);
+        if (this.verbose) {
+            print_config(this.name, this.model_config);
+        }
+
+        const result = chat(() => {
+            try {
+                const response = this.client.chat(this.model_config);
+                return ResponseOrError.from_response(response);
+            } catch (e) {
+                return ResponseOrError.from_error(e);
+            }
+        });
+
+        if (result.is_ok()) {
+            const response = result.unwrap();
+            const res = new this.ResultType({
+                response: response,
+                messages: this.messages,
+                result_type: this.result_type,
+            });
+            this.update_result(res);
+            return res;
+        } else {
+            const error = result.error;
+            return new ErrorResult({ response: error });
+        }
+    }
+
+    toString(): string {
+        return `
+Hey I am ${this.name}
+Clent: ${this.client.name}
+${'-'.repeat(20)}
+system message: 
+${this.system_message?.content || "No System Message"}
+${Object.keys(this.available_tools).length > 0 ? Object.keys(this.available_tools).map(tool => function_to_json(this.available_tools[tool])['function']['name']).join(", ") : "暂时没有提供任何工具"}
+`;
+    }
+}

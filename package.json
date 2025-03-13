@@ -1,0 +1,21 @@
+{
+  "name": "deepseekersts",
+  "version": "1.0.0",
+  "description": "deepseekers 标准 TypeScript 版本",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^22.13.10",
+    "typescript": "^5.8.2"
+  },
+  "dependencies": {
+    "js-yaml": "^4.1.0",
+    "openai": "^4.87.3"
+  }
+}
