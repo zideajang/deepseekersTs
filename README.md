@@ -1,7 +1,7 @@
 # deepseekersTs
 deepseekers 标准 TypeScript 版本
 
-![这是图片](/assets/img/philly-magic-garden.jpg "Magic Gardens")
+![这是图片](/images/cover.jpg "TS 版本")
 
 ## Hello World
 ```ts
