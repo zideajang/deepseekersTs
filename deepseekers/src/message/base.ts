@@ -20,5 +20,4 @@ export enum CodeLanguage {
 export interface BaseMessage {
     role: MessageRole | string;
     content: string | string[];
-    is_hidden?: boolean;
 }

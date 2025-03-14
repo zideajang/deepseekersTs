@@ -15,7 +15,11 @@
     "typescript": "^5.8.2"
   },
   "dependencies": {
+    "@types/chalk": "^2.2.4",
+    "chalk": "^5.4.1",
     "js-yaml": "^4.1.0",
-    "openai": "^4.87.3"
+    "openai": "^4.87.3",
+    "reflect-metadata": "^0.2.2",
+    "ts-morph": "^25.0.1"
   }
 }

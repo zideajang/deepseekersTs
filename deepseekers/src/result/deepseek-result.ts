@@ -15,12 +15,13 @@ export class DeepseekResult<T> implements Result<T> {
         this.result_type = result_type;
         this.result_message = null
 
-        if (this.response.choices[0].message.content) {
+        if (this.response.choices[0].message.content !== '') {
             this.result_message = {
                 role: 'assistant',
                 content: this.response.choices[0].message.content,
             } as AIMessage;
         } else if (this.response.choices[0].message.tool_calls) {
+            // TODO
             const toolCall = this.response.choices[0].message.tool_calls[0];
             this.result_message = {
                 role: 'tool',
@@ -54,18 +55,24 @@ export class DeepseekResult<T> implements Result<T> {
     }
     //TODO 反射来通过 T 来将返回内容实例化 T 类型的实例
     getData(): T | string | null {
-        if (this.result_type) {
-            try {
-                if (!this.response.choices) {
-                    throw new Error('No choices in response');
+        // TODO
+        if (this.result_type){
+            const jsonString = this.response.choices[0].message.content
+            const jsonMatch = jsonString.match(/\{[\s\S]*\}/);
+            
+            if (jsonMatch) {
+                try {
+                    const json = jsonMatch[0];
+                    const data = JSON.parse(json);
+                    return data as T;
+                }catch (e) {
+                    console.error(`Error getting data: ${e}`);
+                    return null;
                 }
-                const data = JSON.parse(this.response.choices[0].message.content);
-                return Object.assign(new this.result_type(), data) as T;
-            } catch (e) {
-                console.error(`Error getting data: ${e}`);
-                return null;
+            } else {
+                return this.getText()
             }
-        } else {
+        }else {
             return this.getText();
         }
     }

@@ -26,5 +26,28 @@ export default class ResponseOrError {
       return this.response;
     }
   }
+
+export function LLMWritable<T extends new (...args: any[]) => any>(Base: T,description:string){
+  return class extends Base {
+    example(): string {
+      return `
+EXAMPLE INPUT: 
+${description}
+EXAMPLE JSON OUTPUT:
+${JSON.stringify(this)}
+              `
+          } 
+    }
+}
+
+export interface LLMWriter{
+  example():string;
+}
+
+export class EmptyLLMriable implements LLMWriter{
+  example(): string {
+      return ""
+  }
+}
   
-  export { ResponseOrError };
+export { ResponseOrError };
